@@ -23,16 +23,16 @@ Core building blocks for your domain model.
 Base struct for domain entities. Uses generics so the ID can be of any type.
 
 ```go
-type Usuario struct {
+type User struct {
     domain.Entity[string]
-    Nome  string
+    Name  string
     Email string
 }
 
-func NewUsuario(nome, email string) *Usuario {
-    return &Usuario{
+func NewUser(name, email string) *User {
+    return &User{
         Entity: domain.Entity[string]{ID: cuid2.Generate()},
-        Nome:   nome,
+        Name:   name,
         Email:  email,
     }
 }
@@ -43,21 +43,21 @@ func NewUsuario(nome, email string) *Usuario {
 Extends `Entity` with domain event support. Use it as the root of your aggregates.
 
 ```go
-type Pedido struct {
+type Order struct {
     domain.AggregateRoot[string]
-    Items []ItemPedido
+    Items []OrderItem
 }
 
-func NewPedido() *Pedido {
-    p := &Pedido{
+func NewOrder() *Order {
+    o := &Order{
         AggregateRoot: domain.NewAggregateRoot[string](cuid2.Generate()),
     }
-    p.RaiseEvent(PedidoCriadoEvent{PedidoID: p.ID})
-    return p
+    o.RaiseEvent(OrderCreatedEvent{OrderID: o.ID})
+    return o
 }
 
 // later, dispatch the events
-events := pedido.PullEvents()
+events := order.PullEvents()
 ```
 
 | Method | Description |
@@ -71,13 +71,13 @@ events := pedido.PullEvents()
 Interface that all domain events must implement.
 
 ```go
-type PedidoCriadoEvent struct {
-    PedidoID   string
+type OrderCreatedEvent struct {
+    OrderID    string
     occurredAt time.Time
 }
 
-func (e PedidoCriadoEvent) EventName() string     { return "pedido.criado" }
-func (e PedidoCriadoEvent) OccurredAt() time.Time { return e.occurredAt }
+func (e OrderCreatedEvent) EventName() string     { return "order.created" }
+func (e OrderCreatedEvent) OccurredAt() time.Time { return e.occurredAt }
 ```
 
 #### `ValueObject`
@@ -91,7 +91,7 @@ type Email struct {
 
 func NewEmail(value string) (Email, error) {
     if !strings.Contains(value, "@") {
-        return Email{}, errors.New("email inválido")
+        return Email{}, errors.New("invalid email")
     }
     return Email{value: value}, nil
 }
@@ -130,10 +130,10 @@ For errors that require additional context.
 
 ```go
 // with code and message
-return dderr.New("USER_INACTIVE", "usuário inativo", nil)
+return dderr.New("USER_INACTIVE", "user is inactive", nil)
 
 // wrapping a cause
-return dderr.New("DB_ERROR", "erro ao buscar usuário", err)
+return dderr.New("DB_ERROR", "error fetching user", err)
 ```
 
 ```go
@@ -176,24 +176,82 @@ Use `Reader` or `Writer` when a use case only needs part of the contract:
 
 ```go
 // a report service only needs to read
-type RelatorioService struct {
-    repo repository.Reader[string, *Usuario]
+type ReportService struct {
+    repo repository.Reader[string, *User]
 }
 
 // an import service only needs to write
-type ImportacaoService struct {
-    repo repository.Writer[*Usuario]
+type ImportService struct {
+    repo repository.Writer[*User]
 }
 ```
 
 Extend with domain-specific methods:
 
 ```go
-type UsuarioRepository interface {
-    repository.Repository[string, *Usuario]
-    FindByEmail(ctx context.Context, email string) (*Usuario, error)
-    FindByUsername(ctx context.Context, username string) (*Usuario, error)
+type UserRepository interface {
+    repository.Repository[string, *User]
+    FindByEmail(ctx context.Context, email string) (*User, error)
+    FindByUsername(ctx context.Context, username string) (*User, error)
 }
+```
+
+---
+
+### `pagination`
+
+Utilities for paginated queries.
+
+#### `Params`
+
+Holds pagination parameters with built-in normalization.
+
+```go
+import "github.com/aleodoni/go-ddd/pagination"
+
+params := pagination.NewParams(page, limit)
+
+// normalized values — page defaults to 1, limit defaults to 20 (max 100)
+fmt.Println(params.Page)     // 1
+fmt.Println(params.Limit)    // 20
+fmt.Println(params.Offset()) // 0
+```
+
+| Method | Description |
+|--------|-------------|
+| `NewParams(page, limit)` | Creates normalized pagination params |
+| `Normalize()` | Ensures page >= 1 and 1 <= limit <= 100 |
+| `Offset()` | Returns the offset for SQL queries: `(page - 1) * limit` |
+
+#### `PagedResult[T]`
+
+Generic wrapper for paginated responses.
+
+```go
+result := pagination.PagedResult[*User]{
+    Items: users,
+    Total: 42,
+    Page:  1,
+    Limit: 20,
+}
+```
+
+Typical use in a use case:
+
+```go
+params := pagination.NewParams(input.Page, input.Limit)
+
+users, total, err := repo.ListUsers(ctx, input.Search, params.Page, params.Limit)
+if err != nil {
+    return nil, err
+}
+
+return &pagination.PagedResult[*User]{
+    Items: users,
+    Total: total,
+    Page:  params.Page,
+    Limit: params.Limit,
+}, nil
 ```
 
 ---
